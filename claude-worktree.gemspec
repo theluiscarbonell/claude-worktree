@@ -10,14 +10,14 @@ Gem::Specification.new do |spec|
 
   spec.summary = 'A TUI tool to manage Git Worktrees for AI coding agents.'
   spec.description = 'Manages git worktrees for Claude Code sessions.'
-  spec.homepage = 'https://github.com/bengarcia/claude-worktree'
+  spec.homepage = 'https://github.com/bucket-robotics/claude-worktree'
   spec.license = 'MIT'
   spec.required_ruby_version = '>= 3.2.0'
 
   spec.metadata['allowed_push_host'] = 'https://rubygems.org'
   spec.metadata['homepage_uri'] = spec.homepage
-  spec.metadata['source_code_uri'] = 'https://github.com/bengarcia/claude-worktree'
-  spec.metadata['changelog_uri'] = 'https://github.com/bengarcia/claude-worktree/blob/main/CHANGELOG.md'
+  spec.metadata['source_code_uri'] = 'https://github.com/bucket-robotics/claude-worktree'
+  spec.metadata['changelog_uri'] = 'https://github.com/bucket-robotics/claude-worktree/blob/main/CHANGELOG.md'
 
   # Specify which files should be added to the gem when it is released.
   spec.files = Dir.chdir(__dir__) do

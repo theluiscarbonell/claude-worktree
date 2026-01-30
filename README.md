@@ -90,7 +90,7 @@ Run `cwt` in the root of any Git repository.
 
 ## 🤝 Contributing
 
-Bug reports and pull requests are welcome on GitHub at https://github.com/bengarcia/claude-worktree.
+Bug reports and pull requests are welcome on GitHub at https://github.com/bucket-robotics/claude-worktree.
 
 ## License
 
