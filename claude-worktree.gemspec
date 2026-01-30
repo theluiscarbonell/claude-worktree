@@ -20,13 +20,8 @@ Gem::Specification.new do |spec|
   spec.metadata['changelog_uri'] = 'https://github.com/bengarcia/claude-worktree/blob/main/CHANGELOG.md'
 
   # Specify which files should be added to the gem when it is released.
-  # The `git ls-files -z` loads the files in the RubyGem that have been added into git.
-  gemspec = File.basename(__FILE__)
-  spec.files = IO.popen(%w[git ls-files -z], chdir: __dir__, err: IO::NULL) do |ls|
-    ls.readlines("\x0", chomp: true).reject do |f|
-      (f == gemspec) ||
-        f.start_with?(*%w[bin/ Gemfile .gitignore test/ .github/])
-    end
+  spec.files = Dir.chdir(__dir__) do
+    Dir["{exe,lib,sig}/**/*", "README.md", "LICENSE.txt", "CHANGELOG.md", "CODE_OF_CONDUCT.md"]
   end
   spec.bindir = 'exe'
   spec.executables = ['cwt']
