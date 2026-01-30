@@ -12,6 +12,16 @@ module Cwt
     POOL_SIZE = 4
 
     def self.run
+      # Always operate from the main repo root, even if called from a worktree
+      git_common_dir = `git rev-parse --path-format=absolute --git-common-dir 2>/dev/null`.strip
+      if git_common_dir.empty?
+        puts "Error: Not in a git repository"
+        exit 1
+      end
+      # --git-common-dir returns /path/to/repo/.git, so strip the /.git
+      git_root = git_common_dir.sub(/\/.git$/, '')
+      Dir.chdir(git_root)
+
       model = Model.new
       
       # Initialize Thread Pool
@@ -78,6 +88,8 @@ module Cwt
       # After TUI exits, cd into last worktree if one was resumed
       if model.exit_directory && Dir.exist?(model.exit_directory)
         Dir.chdir(model.exit_directory)
+        # OSC 7 tells terminal emulators (Ghostty, tmux, iTerm2) the CWD for new panes
+        print "\e]7;file://localhost#{model.exit_directory}\e\\"
         exec ENV.fetch('SHELL', '/bin/zsh')
       end
     end
@@ -173,8 +185,8 @@ module Cwt
             system("claude")
           end
         end
-        # Track last resumed path for exit
-        model.exit_directory = path
+        # Track last resumed path for exit (use absolute path)
+        model.exit_directory = File.expand_path(path)
       rescue => e
         puts "Error: #{e.message}"
         print "Press any key to return..."
