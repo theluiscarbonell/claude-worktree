@@ -14,6 +14,13 @@ module Cwt
       assert_equal 0, @model.selection_index
       assert_equal :normal, @model.mode
       assert @model.running
+      assert_nil @model.exit_directory
+    end
+
+    def test_exit_directory_accessor
+      assert_nil @model.exit_directory
+      @model.exit_directory = "/some/path"
+      assert_equal "/some/path", @model.exit_directory
     end
 
     def test_update_worktrees

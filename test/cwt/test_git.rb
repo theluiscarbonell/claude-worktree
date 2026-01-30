@@ -29,10 +29,10 @@ module Cwt
       Open3.expects(:capture3)
            .with("git", "worktree", "add", "-b", "new-session", ".worktrees/new-session")
            .returns(["stdout", "", mock(success?: true)])
-      
-      # Mock symlinks and directory creation
+
+      # Mock directory creation and marker
       FileUtils.expects(:mkdir_p).with(".worktrees")
-      Git.expects(:setup_environment).with(".worktrees/new-session")
+      Git.expects(:mark_needs_setup).with(".worktrees/new-session")
 
       result = Git.add_worktree("new-session")
       assert result[:success]
@@ -50,13 +50,10 @@ module Cwt
       assert_equal "error message", result[:error]
     end
 
-    def test_setup_environment_default
+    def test_setup_default_symlinks
       root = Dir.pwd
       target = ".worktrees/test"
-      
-      # Setup mocks for default behavior (no script)
-      File.expects(:exist?).with(File.join(root, ".cwt", "setup")).returns(false)
-      
+
       # Expect checks for source files
       File.expects(:exist?).with(File.join(root, ".env")).returns(true)
       File.expects(:exist?).with(File.join(root, "node_modules")).returns(true)
@@ -69,25 +66,28 @@ module Cwt
       FileUtils.expects(:ln_s).with(File.join(root, ".env"), File.join(target, ".env"))
       FileUtils.expects(:ln_s).with(File.join(root, "node_modules"), File.join(target, "node_modules"))
 
-      Git.send(:setup_environment, target)
+      Git.send(:setup_default_symlinks, target, root)
     end
 
-    def test_setup_environment_custom_script
-      root = Dir.pwd
-      target = ".worktrees/test"
-      script_path = File.join(root, ".cwt", "setup")
-      
-      # Setup mocks for custom script
-      File.expects(:exist?).with(script_path).returns(true)
-      File.expects(:executable?).with(script_path).returns(true)
+    def test_needs_setup_checks_marker_file
+      path = ".worktrees/test"
+      marker = File.join(path, Git::SETUP_MARKER)
 
-      # Expect execution
-      Open3.expects(:capture2).with(script_path, chdir: target)
+      File.expects(:exist?).with(marker).returns(true)
+      assert Git.needs_setup?(path)
 
-      # Should NOT try to symlink
-      FileUtils.expects(:ln_s).never
+      File.expects(:exist?).with(marker).returns(false)
+      refute Git.needs_setup?(path)
+    end
 
-      Git.send(:setup_environment, target)
+    def test_mark_setup_complete_removes_marker
+      path = ".worktrees/test"
+      marker = File.join(path, Git::SETUP_MARKER)
+
+      File.expects(:exist?).with(marker).returns(true)
+      File.expects(:delete).with(marker)
+
+      Git.mark_setup_complete(path)
     end
   end
 end
