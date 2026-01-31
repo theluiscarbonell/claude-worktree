@@ -1,10 +1,13 @@
+# frozen_string_literal: true
+
 module Cwt
   class Model
-    attr_reader :worktrees, :selection_index, :mode, :input_buffer, :message, :running, :fetch_generation, :filter_query
-    attr_accessor :exit_directory
+    attr_reader :repository, :selection_index, :mode, :input_buffer, :message, :running, :fetch_generation, :filter_query
+    attr_accessor :resume_to  # Worktree object or nil
 
-    def initialize
-      @worktrees = []
+    def initialize(repository)
+      @repository = repository
+      @worktrees_cache = []
       @selection_index = 0
       @mode = :normal # :normal, :creating, :filtering
       @input_buffer = String.new
@@ -12,19 +15,41 @@ module Cwt
       @message = "Welcome to CWT"
       @running = true
       @fetch_generation = 0
-      @exit_directory = nil
+      @resume_to = nil
+    end
+
+    def worktrees
+      @worktrees_cache
+    end
+
+    def refresh_worktrees!
+      @worktrees_cache = @repository.worktrees
+      clamp_selection
+      @worktrees_cache
     end
 
     def update_worktrees(list)
-      @worktrees = list
+      @worktrees_cache = list
       clamp_selection
+    end
+
+    def find_worktree_by_path(path)
+      # Normalize path for comparison (handles macOS /var -> /private/var symlinks)
+      normalized = begin
+        File.realpath(path)
+      rescue Errno::ENOENT
+        File.expand_path(path)
+      end
+      @worktrees_cache.find { |wt| wt.path == normalized }
     end
 
     def visible_worktrees
       if @filter_query.empty?
-        @worktrees
+        @worktrees_cache
       else
-        @worktrees.select { |wt| wt[:path].include?(@filter_query) || (wt[:branch] && wt[:branch].include?(@filter_query)) }
+        @worktrees_cache.select do |wt|
+          wt.path.include?(@filter_query) || (wt.branch && wt.branch.include?(@filter_query))
+        end
       end
     end
 
@@ -35,7 +60,7 @@ module Cwt
     def move_selection(delta)
       list = visible_worktrees
       return if list.empty?
-      
+
       new_index = @selection_index + delta
       if new_index >= 0 && new_index < list.size
         @selection_index = new_index

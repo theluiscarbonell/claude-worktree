@@ -6,88 +6,57 @@ require "mocha/minitest"
 
 module Cwt
   class TestGit < Minitest::Test
-    def test_parse_porcelain
-      output = <<~PORCELAIN
-        worktree /Users/bengarcia/projects/claude-worktree
-        HEAD d8a8d1b1c6e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1
-        branch refs/heads/main
-
-        worktree /Users/bengarcia/projects/claude-worktree/.worktrees/feature-1
-        HEAD a1b2c3d4e5f6g7h8i9j0
-        branch refs/heads/feature-1
-      PORCELAIN
-
-      worktrees = Git.send(:parse_porcelain, output)
-      
-      assert_equal 2, worktrees.size
-      assert_equal "/Users/bengarcia/projects/claude-worktree", worktrees[0][:path]
-      assert_equal "main", worktrees[0][:branch]
-      assert_equal "feature-1", worktrees[1][:branch]
+    def test_get_commit_ages_empty_shas
+      ages = Git.get_commit_ages([])
+      assert_equal({}, ages)
     end
 
-    def test_add_worktree_success
-      Open3.expects(:capture3)
-           .with("git", "worktree", "add", "-b", "new-session", ".worktrees/new-session")
-           .returns(["stdout", "", mock(success?: true)])
+    def test_get_commit_ages_parses_output
+      Open3.expects(:capture2)
+           .returns(["abc123|2 hours ago\ndef456|3 days ago\n", mock(success?: true)])
 
-      # Mock directory creation and marker
-      FileUtils.expects(:mkdir_p).with(".worktrees")
-      Git.expects(:mark_needs_setup).with(".worktrees/new-session")
+      ages = Git.get_commit_ages(["abc123", "def456"])
 
-      result = Git.add_worktree("new-session")
-      assert result[:success]
-      assert_equal ".worktrees/new-session", result[:path]
+      assert_equal "2 hours ago", ages["abc123"]
+      assert_equal "3 days ago", ages["def456"]
     end
 
-    def test_add_worktree_failure
-      Open3.expects(:capture3)
-           .returns(["", "error message", mock(success?: false)])
-      
-      FileUtils.stubs(:mkdir_p)
+    def test_get_status_returns_dirty_hash
+      path = "/some/path"
 
-      result = Git.add_worktree("bad-session")
-      refute result[:success]
-      assert_equal "error message", result[:error]
+      Open3.expects(:capture2)
+           .with("git", "--no-optional-locks", "-C", path, "status", "--porcelain")
+           .returns(["M file.txt\n", mock(success?: true)])
+
+      result = Git.get_status(path)
+      assert result[:dirty]
     end
 
-    def test_setup_default_symlinks
-      root = Dir.pwd
-      target = ".worktrees/test"
+    def test_get_status_returns_clean_hash
+      path = "/some/path"
 
-      # Expect checks for source files
-      File.expects(:exist?).with(File.join(root, ".env")).returns(true)
-      File.expects(:exist?).with(File.join(root, "node_modules")).returns(true)
+      Open3.expects(:capture2)
+           .with("git", "--no-optional-locks", "-C", path, "status", "--porcelain")
+           .returns(["", mock(success?: true)])
 
-      # Expect checks for target files (don't exist yet)
-      File.expects(:exist?).with(File.join(target, ".env")).returns(false)
-      File.expects(:exist?).with(File.join(target, "node_modules")).returns(false)
-
-      # Expect symlinks
-      FileUtils.expects(:ln_s).with(File.join(root, ".env"), File.join(target, ".env"))
-      FileUtils.expects(:ln_s).with(File.join(root, "node_modules"), File.join(target, "node_modules"))
-
-      Git.send(:setup_default_symlinks, target, root)
+      result = Git.get_status(path)
+      refute result[:dirty]
     end
 
-    def test_needs_setup_checks_marker_file
-      path = ".worktrees/test"
-      marker = File.join(path, Git::SETUP_MARKER)
+    def test_prune_worktrees
+      Open3.expects(:capture2)
+           .with("git", "worktree", "prune")
+           .returns(["", nil])
 
-      File.expects(:exist?).with(marker).returns(true)
-      assert Git.needs_setup?(path)
-
-      File.expects(:exist?).with(marker).returns(false)
-      refute Git.needs_setup?(path)
+      Git.prune_worktrees
     end
 
-    def test_mark_setup_complete_removes_marker
-      path = ".worktrees/test"
-      marker = File.join(path, Git::SETUP_MARKER)
+    def test_prune_worktrees_with_repo_root
+      Open3.expects(:capture2)
+           .with("git", "-C", "/repo/root", "worktree", "prune")
+           .returns(["", nil])
 
-      File.expects(:exist?).with(marker).returns(true)
-      File.expects(:delete).with(marker)
-
-      Git.mark_setup_complete(path)
+      Git.prune_worktrees(repo_root: "/repo/root")
     end
   end
 end

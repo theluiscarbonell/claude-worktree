@@ -2,6 +2,8 @@
 
 require "ratatui_ruby"
 require "thread"
+require_relative "repository"
+require_relative "worktree"
 require_relative "model"
 require_relative "view"
 require_relative "update"
@@ -12,36 +14,35 @@ module Cwt
     POOL_SIZE = 4
 
     def self.run
-      # Always operate from the main repo root, even if called from a worktree
-      git_common_dir = `git rev-parse --path-format=absolute --git-common-dir 2>/dev/null`.strip
-      if git_common_dir.empty?
+      # Discover repository from current directory (works from worktrees too)
+      repository = Repository.discover
+      unless repository
         puts "Error: Not in a git repository"
         exit 1
       end
-      # --git-common-dir returns /path/to/repo/.git, so strip the /.git
-      git_root = git_common_dir.sub(/\/.git$/, '')
-      Dir.chdir(git_root)
 
-      model = Model.new
-      
+      # Change to repo root for consistent paths
+      Dir.chdir(repository.root)
+
+      model = Model.new(repository)
+
       # Initialize Thread Pool
       @worker_queue = Queue.new
       @workers = POOL_SIZE.times.map do
         Thread.new do
-          while task = @worker_queue.pop
-            # Process task
+          while (task = @worker_queue.pop)
             begin
               case task[:type]
               when :fetch_status
                 status = Git.get_status(task[:path])
-                task[:result_queue] << { 
-                  type: :update_status, 
-                  path: task[:path], 
-                  status: status, 
-                  generation: task[:generation] 
+                task[:result_queue] << {
+                  type: :update_status,
+                  path: task[:path],
+                  status: status,
+                  generation: task[:generation]
                 }
               end
-            rescue => e
+            rescue StandardError
               # Ignore worker errors
             end
           end
@@ -50,7 +51,7 @@ module Cwt
 
       # Initial Load
       Update.refresh_list(model)
-      
+
       # Main Event Queue
       main_queue = Queue.new
       start_background_fetch(model, main_queue)
@@ -78,18 +79,16 @@ module Cwt
           # Process Background Queue
           while !main_queue.empty?
             msg = main_queue.pop(true) rescue nil
-            if msg
-              Update.handle(model, msg)
-            end
+            Update.handle(model, msg) if msg
           end
         end
       end
 
       # After TUI exits, cd into last worktree if one was resumed
-      if model.exit_directory && Dir.exist?(model.exit_directory)
-        Dir.chdir(model.exit_directory)
+      if model.resume_to && model.resume_to.exists?
+        Dir.chdir(model.resume_to.path)
         # OSC 7 tells terminal emulators (Ghostty, tmux, iTerm2) the CWD for new panes
-        print "\e]7;file://localhost#{model.exit_directory}\e\\"
+        print "\e]7;file://localhost#{model.resume_to.path}\e\\"
         exec ENV.fetch('SHELL', '/bin/zsh')
       end
     end
@@ -117,7 +116,7 @@ module Cwt
         result = Update.handle(model, cmd)
         handle_command(result, model, tui, main_queue)
       when :resume_worktree, :suspend_and_resume
-        suspend_tui_and_run(cmd[:path], model, tui)
+        suspend_tui_and_run(cmd[:worktree], model, tui)
         Update.refresh_list(model)
         start_background_fetch(model, main_queue)
       end
@@ -129,20 +128,19 @@ module Cwt
       current_gen = model.fetch_generation
 
       worktrees = model.worktrees
-      
-      # Batch fetch commit ages (Fast enough to do on main thread or one-off thread? 
-      # Git.get_commit_ages is fast. Let's do it in a one-off thread to not block UI)
+
+      # Batch fetch commit ages in background thread
       Thread.new do
-        shas = worktrees.map { |wt| wt[:sha] }.compact
-        ages = Git.get_commit_ages(shas)
-        
+        shas = worktrees.map(&:sha).compact
+        ages = Git.get_commit_ages(shas, repo_root: model.repository.root)
+
         worktrees.each do |wt|
-          if age = ages[wt[:sha]]
-            main_queue << { 
-              type: :update_commit_age, 
-              path: wt[:path], 
-              age: age, 
-              generation: current_gen 
+          if (age = ages[wt.sha])
+            main_queue << {
+              type: :update_commit_age,
+              path: wt.path,
+              age: age,
+              generation: current_gen
             }
           end
         end
@@ -150,25 +148,25 @@ module Cwt
 
       # Queue Status Checks (Worker Pool)
       worktrees.each do |wt|
-        @worker_queue << { 
-          type: :fetch_status, 
-          path: wt[:path], 
-          result_queue: main_queue, 
-          generation: current_gen 
+        @worker_queue << {
+          type: :fetch_status,
+          path: wt.path,
+          result_queue: main_queue,
+          generation: current_gen
         }
       end
     end
 
-    def self.suspend_tui_and_run(path, model, tui)
+    def self.suspend_tui_and_run(worktree, model, tui)
       RatatuiRuby.restore_terminal
 
       puts "\e[H\e[2J" # Clear screen
 
       # Run setup if this is a new worktree
-      if Git.needs_setup?(path)
+      if worktree.needs_setup?
         begin
-          Git.run_setup_visible(path)
-          Git.mark_setup_complete(path)
+          worktree.run_setup!(visible: true)
+          worktree.mark_setup_complete!
         rescue Interrupt
           puts "\nSetup aborted."
           RatatuiRuby.init_terminal
@@ -176,18 +174,18 @@ module Cwt
         end
       end
 
-      puts "Launching claude in #{path}..."
+      puts "Launching claude in #{worktree.path}..."
       begin
-        Dir.chdir(path) do
+        Dir.chdir(worktree.path) do
           if defined?(Bundler)
             Bundler.with_unbundled_env { system("claude") }
           else
             system("claude")
           end
         end
-        # Track last resumed path for exit (use absolute path)
-        model.exit_directory = File.expand_path(path)
-      rescue => e
+        # Track last resumed worktree for exit
+        model.resume_to = worktree
+      rescue StandardError => e
         puts "Error: #{e.message}"
         print "Press any key to return..."
         STDIN.getc

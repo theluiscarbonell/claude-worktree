@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "git"
-
 module Cwt
   class Update
     def self.handle(model, message)
@@ -16,26 +14,24 @@ module Cwt
         refresh_list(model)
         :start_background_fetch
       when :create_worktree
-        result = Git.add_worktree(message[:name])
+        result = model.repository.create_worktree(message[:name])
         if result[:success]
           model.set_message("Created worktree: #{message[:name]}")
           refresh_list(model)
           model.set_mode(:normal)
           model.set_filter(String.new) # Clear filter
           # Auto-enter the new session
-          # We return the resume command directly. 
-          # The App will execute resume, which involves suspend->run->restore->refresh->fetch
-          { type: :resume_worktree, path: result[:path] }
+          { type: :resume_worktree, worktree: result[:worktree] }
         else
           model.set_message("Error: #{result[:error]}")
           nil
         end
       when :delete_worktree
-        path = message[:path]
+        worktree = message[:worktree]
         force = message[:force] || false
-        
-        result = Git.remove_worktree(path, force: force)
-        
+
+        result = worktree.delete!(force: force)
+
         if result[:success]
           if result[:warning]
             model.set_message("Warning: #{result[:warning]}. Use 'D' to force delete.")
@@ -49,22 +45,18 @@ module Cwt
           nil
         end
       when :resume_worktree
-        { type: :suspend_and_resume, path: message[:path] }
+        { type: :suspend_and_resume, worktree: message[:worktree] }
       when :update_status
         return nil if message[:generation] != model.fetch_generation
-        
-        target = model.worktrees.find { |wt| wt[:path] == message[:path] }
-        if target
-          target[:dirty] = message[:status][:dirty]
-        end
+
+        target = model.find_worktree_by_path(message[:path])
+        target.dirty = message[:status][:dirty] if target
         nil
       when :update_commit_age
         return nil if message[:generation] != model.fetch_generation
 
-        target = model.worktrees.find { |wt| wt[:path] == message[:path] }
-        if target
-          target[:last_commit] = message[:age]
-        end
+        target = model.find_worktree_by_path(message[:path])
+        target.last_commit = message[:age] if target
         nil
       end
     end
@@ -85,10 +77,9 @@ module Cwt
           # Select current item and resume
           wt = model.selected_worktree
           if wt
-            path = wt[:path]
             model.set_filter(String.new) # Clear filter
             model.set_mode(:normal) # Exit filter mode on selection
-            return { type: :resume_worktree, path: path } 
+            return { type: :resume_worktree, worktree: wt }
           else
             model.set_mode(:normal)
           end
@@ -118,16 +109,15 @@ module Cwt
           model.set_mode(:filtering)
         elsif event.d?
           wt = model.selected_worktree
-          return { type: :delete_worktree, path: wt[:path], force: false } if wt
+          return { type: :delete_worktree, worktree: wt, force: false } if wt
         elsif event.D? # Shift+d
           wt = model.selected_worktree
-          return { type: :delete_worktree, path: wt[:path], force: true } if wt
+          return { type: :delete_worktree, worktree: wt, force: true } if wt
         elsif event.enter?
           wt = model.selected_worktree
           if wt
-            path = wt[:path]
             model.set_filter(String.new) # Clear filter on resume
-            return { type: :resume_worktree, path: path }
+            return { type: :resume_worktree, worktree: wt }
           end
         elsif event.r?
           return { type: :refresh_list }
@@ -137,8 +127,7 @@ module Cwt
     end
 
     def self.refresh_list(model)
-      list = Git.list_worktrees
-      model.update_worktrees(list)
+      model.refresh_worktrees!
     end
   end
 end
