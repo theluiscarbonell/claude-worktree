@@ -132,18 +132,23 @@ module Cwt
       worktrees = model.worktrees
 
       # Batch fetch commit ages in background thread
+      # Group by repository to fetch from correct git repo (avoids "bad object" errors)
       Thread.new do
-        shas = worktrees.map(&:sha).compact
-        ages = Git.get_commit_ages(shas, repo_root: model.repository.root)
+        worktrees.group_by(&:repository).each do |repo, repo_worktrees|
+          shas = repo_worktrees.map(&:sha).compact
+          next if shas.empty?
 
-        worktrees.each do |wt|
-          if (age = ages[wt.sha])
-            main_queue << {
-              type: :update_commit_age,
-              path: wt.path,
-              age: age,
-              generation: current_gen
-            }
+          ages = Git.get_commit_ages(shas, repo_root: repo.root)
+
+          repo_worktrees.each do |wt|
+            if (age = ages[wt.sha])
+              main_queue << {
+                type: :update_commit_age,
+                path: wt.path,
+                age: age,
+                generation: current_gen
+              }
+            end
           end
         end
       end
